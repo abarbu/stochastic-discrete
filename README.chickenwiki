@@ -10,7 +10,7 @@ distributions along with a stochastic constraint satisfaction problem
 solver.
 
 It is currently undocumented but will one day be documented. See
-stochastic-discrete-example.sc.
+stochastic-discrete-example.scm.
 
 === License ===
 
