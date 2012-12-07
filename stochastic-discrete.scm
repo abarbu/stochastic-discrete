@@ -1,6 +1,98 @@
 (module stochastic-discrete *
-(import chicken scheme)
+(import chicken scheme extras)
 (require-extension nondeterminism define-structure srfi-1 traversal)
+
+(define  *gm-strategy* 'ac)
+
+;; (define-macro fold-distribution
+;;  (lambda (form expander)
+;;   (unless (= (length form) 4)
+;;    (error 'support "Improper FOLD-DISTRIBUTION: ~s" form))
+;;   (expander `(fold-distribution-thunk
+;; 	      ,(second form) ,(third form) (lambda () ,(fourth form)))
+;; 	    expander)))
+
+(define-syntax fold-distribution
+ (syntax-rules ()
+  ((_ f i thunk) (fold-distribution-thunk f i (lambda () thunk)))))
+
+;; (define-macro support
+;;  (lambda (form expander)
+;;   (unless (= (length form) 2) (error 'support "Improper SUPPORT: ~s" form))
+;;   (expander `(support-thunk (lambda () ,(second form))) expander)))
+
+(define-syntax support
+ (syntax-rules ()
+  ((_ thunk) (support-thunk-thunk))))
+
+(define-syntax supportq
+ (syntax-rules ()
+  ((_ thunk) (supportq-thunk-thunk))))
+
+(define-syntax supportv
+ (syntax-rules ()
+  ((_ thunk) (supportv-thunk-thunk))))
+
+(define-syntax supportp
+ (syntax-rules ()
+  ((_ thunk) (supportv-thunk-thunk))))
+
+;; (define-macro probability
+;;  (lambda (form expander)
+;;   (unless (= (length form) 2)
+;;    (error 'probability "Improper PROBABILITY: ~s" form))
+;;   (expander `(probability-thunk (lambda () ,(second form))) expander)))
+
+(define-syntax probability
+ (syntax-rules ()
+  ((_ thunk) (probability-thunk (lambda () thunk)))))
+
+;; (define-macro expected-value
+;;  (lambda (form expander)
+;;   (unless (= (length form) 5)
+;;    (error 'expected-value "Improper EXPECTED-VALUE: ~s" form))
+;;   (expander `(expected-value-thunk
+;; 	      ,(second form)
+;; 	      ,(third form)
+;; 	      ,(fourth form)
+;; 	      (lambda () ,(fifth form)))
+;; 	    expander)))
+
+(define-syntax expected-value
+ (syntax-rules ()
+  ((_ plus times zero thunk) 
+   (expected-value-thunk plus times zero (lambda () thunk)))))
+
+;; (define-macro entropy
+;;  (lambda (form expander)
+;;   (unless (= (length form) 2) (error 'entropy "Improper ENTROPY: ~s" form))
+;;   (expander `(entropy-thunk (lambda () ,(second form))) expander)))
+
+(define-syntax entropy
+ (syntax-rules ()
+  ((_ thunk) (entropy-thunk (lambda () thunk)))))
+
+;; (define-macro distribution
+;;  (lambda (form expander)
+;;   (unless (= (length form) 2)
+;;    (error 'distribution "Improper DISTRIBUTION: ~s" form))
+;;   (expander `(distribution-thunk (lambda () ,(second form))) expander)))
+
+(define-syntax distribution
+ (syntax-rules ()
+  ((_ thunk) (distribution-thunk-thunk))))
+
+(define-syntax distributionq
+ (syntax-rules ()
+  ((_ thunk) (distributionq-thunk-thunk))))
+
+(define-syntax distributionv
+ (syntax-rules ()
+  ((_ thunk) (distributionv-thunk-thunk))))
+
+(define-syntax distributionp
+ (syntax-rules ()
+  ((_ thunk) (distributionv-thunk-thunk))))
 
 ;;; TODO mutual information, K-L divergence, mean, median, mode, variance
 
@@ -161,4 +253,246 @@
 	  (car (first pairs))
 	  (loop (- p (cdr (first pairs))) (rest pairs))))))
 
+
+;;; Graphical models
+
+;;; domain -> distribution
+;;; csp -> gm
+;;; fail -> bottom
+
+;;; This assume a model where there is no renormalization due to bottoms.
+
+(define-structure distribution-variable distribution demons)
+
+(define (upon-bottom-thunk thunk)
+ (let ((saved-bottom bottom))
+  (set! bottom (lambda () (thunk) (saved-bottom)))))
+
+(define (create-distribution-variable distribution)
+ (let ((distribution
+	(remove-if (lambda (pair) (zero? (cdr pair))) distribution)))
+  (when (null? distribution) (bottom))
+  (make-distribution-variable distribution '())))
+
+(define (restrict-distribution! x distribution)
+ (define (local-set-distribution-variable-distribution!
+	  distribution-variable distribution)
+  (let ((distribution
+	 (distribution-variable-distribution distribution-variable)))
+   (upon-bottom-thunk
+    (lambda ()
+     (set-distribution-variable-distribution!
+      distribution-variable distribution))))
+  (set-distribution-variable-distribution! distribution-variable distribution))
+ (when (null? distribution) (bottom))
+ (when (< (length distribution)
+	  (length (distribution-variable-distribution x)))
+  (local-set-distribution-variable-distribution! x distribution)
+  (for-each (lambda (demon) (demon)) (distribution-variable-demons x))))
+
+(define (gm-bound? x) (null? (rest (distribution-variable-distribution x))))
+
+(define (gm-binding x) (car (first (distribution-variable-distribution x))))
+
+(define (gm-solution ds)
+ (let loop ((ds ds) (xs '()))
+  (if (null? ds)
+      (reverse xs)
+      (let ((pair
+	     (draw-pair (distribution-variable-distribution (first ds)))))
+       (restrict-distribution! (first ds) (list pair))
+       (loop (rest ds) (cons (first pair) xs))))))
+
+(define (gm-bb-solution ds)
+ (let ((best 0))
+  (let loop ((ds ds) (xs '()))
+   (when (<= (current-probability) best) (bottom))
+   (cond
+    ((null? ds)
+     (when (< best (current-probability)) (set! best (current-probability)))
+     (reverse xs))
+    (else
+     (let ((pair
+	    (draw-pair (distribution-variable-distribution (first ds)))))
+      (restrict-distribution! (first ds) (list pair))
+      (loop (rest ds) (cons (first pair) xs))))))))
+
+(define (gm-bb-predict-solution ds)
+ (let ((best 0))
+  (let loop ((ds ds) (xs '()))
+   (when (or (<= (current-probability) best)
+	     (<= (foldl
+		  (lambda (v d)
+		   (* v
+		      (map-reduce max
+				  -inf.0
+				  cdr
+				  (distribution-variable-distribution d))))
+		  ds
+		  (current-probability))
+	     	 best))
+    (bottom))
+   (cond
+    ((null? ds)
+     (when (< best (current-probability)) (set! best (current-probability)))
+     (reverse xs))
+    (else
+     (let ((pair
+	    (draw-pair (distribution-variable-distribution (first ds)))))
+      (restrict-distribution! (first ds) (list pair))
+      (loop (rest ds) (cons (first pair) xs))))))))
+
+(define (gm-bb-predict-solution-with-start ds start)
+ (let ((best start))
+  (let loop ((ds ds) (xs '()))
+   (when (or (<= (current-probability) best)
+	     (<= (foldl
+		  (lambda (v d)
+		   (* v
+		      (map-reduce max
+				  -inf.0
+				  cdr
+				  (distribution-variable-distribution d))))
+		  ds
+		  (current-probability))
+	     	 best))
+    (bottom))
+   (cond
+    ((null? ds)
+     (when (< best (current-probability)) (set! best (current-probability)))
+     (reverse xs))
+    (else
+     (let ((pair
+	    (draw-pair (distribution-variable-distribution (first ds)))))
+      (restrict-distribution! (first ds) (list pair))
+      (loop (rest ds) (cons (first pair) xs))))))))
+
+(define (some-element p x)
+ (some (lambda (x) (p (car x))) (distribution-variable-distribution x)))
+
+(define (one-element p x)
+ (one (lambda (x) (p (car x))) (distribution-variable-distribution x)))
+
+(define (the-element p x)
+ (list (find-if (lambda (x) (p (car x)))
+		(distribution-variable-distribution x))))
+
+(define (the-elements p x)
+ (remove-if-not (lambda (x) (p (car x)))
+		(distribution-variable-distribution x)))
+
+(define (attach-demon! demon x)
+ (define (local-set-distribution-variable-demons! distribution-variable demons)
+  (let ((demons (distribution-variable-demons distribution-variable)))
+   (upon-bottom-thunk
+    (lambda ()
+     (set-distribution-variable-demons! distribution-variable demons))))
+  (set-distribution-variable-demons! distribution-variable demons))
+ (local-set-distribution-variable-demons!
+  x (cons demon (distribution-variable-demons x)))
+ (demon))
+
+(define (gm-assert-constraint-efd! constraint xs)
+ (for-each
+  (lambda (x)
+   (attach-demon! (lambda ()
+		   (when (every gm-bound? xs)
+		    (unless (apply constraint (map gm-binding xs)) (bottom))))
+		  x))
+  xs))
+
+(define (gm-assert-constraint-fc! constraint xs)
+ (for-each
+  (lambda (x)
+   (attach-demon!
+    (lambda ()
+     (when (one (lambda (x) (not (gm-bound? x))) xs)
+      (let* ((i (position-if (lambda (x) (not (gm-bound? x))) xs))
+	     (x (list-ref xs i)))
+       (unless (some-element
+		(lambda (xe)
+		 (apply
+		  constraint
+		  (map-indexed (lambda (x j) (if (= j i) xe (gm-binding x))) xs)))
+		x)
+	(bottom)))))
+    x))
+  xs))
+
+(define (gm-assert-constraint-vp! constraint xs)
+ (for-each
+  (lambda (x)
+   (attach-demon!
+    (lambda ()
+     (when (one (lambda (x) (not (gm-bound? x))) xs)
+      (let* ((i (position-if (lambda (x) (not (gm-bound? x))) xs))
+	     (x (list-ref xs i)))
+       (when (one-element
+	      (lambda (xe)
+	       (apply
+		constraint
+		(map-indexed (lambda (x j) (if (= j i) xe (gm-binding x))) xs)))
+	      x)
+	(restrict-distribution!
+	 x
+	 (the-element
+	  (lambda (xe)
+	   (apply constraint
+		  (map-indexed (lambda (x j) (if (= j i) xe (gm-binding x))) xs)))
+	  x))))))
+    x))
+  xs))
+
+(define (gm-assert-constraint-gfc! constraint xs)
+ (for-each
+  (lambda (x)
+   (attach-demon!
+    (lambda ()
+     (when (one (lambda (x) (not (gm-bound? x))) xs)
+      (let* ((i (position-if (lambda (x) (not (gm-bound? x))) xs))
+	     (x (list-ref xs i)))
+       (restrict-distribution!
+	x
+	(the-elements
+	 (lambda (xe)
+	  (apply constraint
+		 (map-indexed (lambda (x j) (if (= j i) xe (gm-binding x))) xs)))
+	 x)))))
+    x))
+  xs))
+
+(define (gm-assert-constraint-ac! constraint ds)
+ (for-each-indexed
+  (lambda (d k)
+   (attach-demon!
+    (lambda ()
+     (for-each-indexed
+      (lambda (d i)
+       (unless (= i k)
+	(restrict-distribution!
+	 d
+	 (the-elements
+	  (lambda (x)
+	   (let loop ((ds ds) (xs '()) (j 0))
+	    (if (null? ds)
+		(apply constraint (reverse xs))
+		(if (= j i)
+		    (loop (rest ds) (cons x xs) (+ j 1))
+		    (some (lambda (pair)
+			   (loop (rest ds) (cons (car pair) xs) (+ j 1)))
+			  (distribution-variable-distribution (first ds)))))))
+	  d))))
+      ds))
+    d))
+  ds))
+
+(define (gm-assert-constraint! constraint . distribution-variables)
+ (case *gm-strategy*
+  ((efd) (gm-assert-constraint-efd! constraint distribution-variables))
+  ((fc) (gm-assert-constraint-fc! constraint distribution-variables))
+  ((vp) (gm-assert-constraint-fc! constraint distribution-variables)
+   (gm-assert-constraint-vp! constraint distribution-variables))
+  ((gfc) (gm-assert-constraint-gfc! constraint distribution-variables))
+  ((ac) (gm-assert-constraint-ac! constraint distribution-variables))
+  (else (error "Unrecognized strategy"))))
 )
