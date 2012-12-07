@@ -9,7 +9,8 @@ This implements a stochastic programming language for discrete
 distributions along with a stochastic constraint satisfaction problem
 solver.
 
-It is currently undocumented but will one day be documented.
+It is currently undocumented but will one day be documented. See
+stochastic-discrete-example.sc.
 
 === License ===
 
