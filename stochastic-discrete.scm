@@ -80,19 +80,19 @@
 
 (define-syntax distribution
  (syntax-rules ()
-  ((_ thunk) (distribution-thunk thunk))))
+  ((_ thunk) (distribution-thunk (lambda () thunk)))))
 
 (define-syntax distributionq
  (syntax-rules ()
-  ((_ thunk) (distributionq-thunk thunk))))
+  ((_ thunk) (distributionq-thunk (lambda () thunk)))))
 
 (define-syntax distributionv
  (syntax-rules ()
-  ((_ thunk) (distributionv-thunk thunk))))
+  ((_ thunk) (distributionv-thunk (lambda () thunk)))))
 
 (define-syntax distributionp
  (syntax-rules ()
-  ((_ thunk) (distributionv-thunk thunk))))
+  ((_ thunk) (distributionv-thunk (lambda () thunk)))))
 
 ;;; TODO mutual information, K-L divergence, mean, median, mode, variance
 
