@@ -32,3 +32,20 @@
   '#(0.5 0.5)
   1000
   0.1))
+
+(define (example1)
+ (let* ((rain (flip 0.2))
+        (sprinkler (if rain (flip 0.01) (flip 0.4)))
+        (grass-wet (cond ((and (not sprinkler) (not rain)) (flip 0))
+                         ((and (not sprinkler) rain)       (flip 0.8))
+                         ((and sprinkler (not rain))       (flip 0.9))
+                         ((and sprinkler rain)             (flip 0.99)))))
+  (list rain sprinkler grass-wet)))
+
+;; expect to see 0.288 and 0.16038, which normalized
+;;  0.16038/(0.288*0.16038)=0.3576
+;; agrees with wikipedia
+(distribution
+ (let ((r (example1)))
+  (when (not (last r)) (bottom))
+  (first r)))

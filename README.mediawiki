@@ -1,23 +1,212 @@
-= stochastic-discrete =
+
+== stochastic-discrete ==
 
 This implements a stochastic programming language for discrete
 distributions along with a stochastic constraint satisfaction problem
 solver.
 
-It is currently undocumented but will one day be documented. See
-stochastic-discrete-example.scm.
+Distributions are lists of dotted pairs, an arbitrary object followed
+by a probability (e.g. ''((a . 0.2) (b . 0.5) (c . 0.3))''). They must
+be non-negative, but may sum to less than one. The output of
+distribution of a stochastic program is not normalized to sum to 1;
+you'll have to do that yourself if that's what you're after.
+
+This egg is an extension to the ''nondeterminism'' and ''csp'' eggs
+and works very similarly. Domains are distributions, a csp (constraint
+satisfaction problem) is a gm (graphical model), fail is bottom,
+unwedge-trail is forget-trail.
+
+=== Example ===
+
+[[Image:https://raw.github.com/abarbu/stochastic-discrete/master/bayes-net-example.png]]
+
+We can implement the above with a stochastic program, I've kept this
+simple using only ''flip'' but it could be more succinctly written
+with ''draw''.
+
+   (define (example1)
+    (let* ((rain (flip 0.2))
+           (sprinkler (if rain (flip 0.01) (flip 0.4)))
+           (grass-wet (cond ((and (not sprinkler) (not rain)) (flip 0))
+                            ((and (not sprinkler) rain)       (flip 0.8))
+                            ((and sprinkler (not rain))       (flip 0.9))
+                            ((and sprinkler rain)             (flip 0.99)))))
+     (list rain sprinkler grass-wet)))
+
+We can then query the program, say we want to answer the same question
+as the Wikipedia page for Bayesian networks ("What is the probability
+that it is raining, given the grass is wet?")
+
+   (normalize-distribution
+    (distribution
+     (let ((r (example1)))
+      (when (not (last r)) (bottom))
+      (first r))))
+
+This will return
+
+    ((#f . 0.642312324367724) (#t . 0.357687675632276))
+
+Which agrees with Wikipedia's computation of 35.77%.
+
+=== High-level API ===
+
+==== Generation ====
+
+:(flip alpha)
+
+Flip a biased coin with the probability of true being ''alpha''.
+
+:(bottom)
+
+The analog to the nondeterminism egg's ''(fail)'', this part of the
+computation will be pruned.
+
+:(forget-trail)
+
+The equivalent to the nondeterminism egg's ''(unwedge-trail)''. On
+errors backtracking information will be left on the internal stack,
+this resets the state of all computations carried out by this egg.
+
+:(draw distribution)
+
+Given a distribution of the form ''((a . 0.2) (b . 0.5) (c . 0.3))''
+will return ''a'', ''b'', and ''c'' with the specified
+probabilities. It will not normalize the input distribution which
+might sum to less than 1.
+
+:(current-probability)
+
+During a computation get the current probability, useful for
+branch-and-bound and similar techniques.
+
+==== Graphical models with constraints ====
+
+:(create-distribution-variable distribution)
+
+Analogous to the ''csp'' egg's ''create-domain-variable''.
+
+:(gm-solution ds)
+
+Given that a stochastic csp has been defined over the given domain
+variables, compute their bindings and find all solutions.
+
+:(gm-bb-solution ds)
+:(gm-bb-predict-solution ds)
+:(gm-bb-predict-solution-with-start ds start)
+
+Given that a stochastic csp has been defined over the given domain
+variables, compute their bindings and find all solutions using branch
+and bound. Only really useful when searching for the most likely
+solution. ''predict'' computes an upper-bound on the future
+probability greatly improving the performance of
+branch-and-bound. ''-with-start'' allows you to provide an initial
+lower-bound on the maximal probability, again greatly improving the
+performance of branch-and-bound.
+
+:(gm-assert-constraint! constraint . distribution-variables)
+
+Analogous to the ''csp'' egg's ''assert-constraint!'' Assert a
+constraint, a function which returns a boolean, on the distribution
+variables. Just like the ''csp'' egg it inspects a global,
+''*gm-strategy*'' in this case, to determine the kind of constraint it
+should apply. Arc consistency, ''ac'', is the default.
+
+:(gm-assert-constraint-efd! constraint ds)
+:(gm-assert-constraint-fc! constraint ds)
+:(gm-assert-constraint-vp! constraint ds)
+:(gm-assert-constraint-gfc! constraint ds)
+:(gm-assert-constraint-ac! constraint ds)
+
+Explicitly apply a constraint of a given type to some distribution
+variables.
+
+=== Execution ===
+
+:(support ...)
+:(probability ...)
+:(expected-value ...)
+:(entropy ...)
+
+Stochastic computations can only be carried out inside one of these
+environmnets.
+
+:(most-likely-value distribution)
+:(most-likely-pair distribution)
+
+Given a distribution returns the most likely value or pair of value
+and probability.
+
+==== Low-level API ====
+
+:(draw-pair distribution)
+
+Given a distribution of the form ''((a . 0.1) (b . 0.5) (c . 0.4))''
+will return ''(a . 0.1)'', ''(b . 0.5)'', and ''(c . 0.4)'' with the
+specified probabilities. It will normalize the input distribution, any
+remaining probability mass is placed on the last element of this
+distribution, meaning that ''c'' would have probability 0.4 even if we
+had specified some other value.
+
+:(fold-distribution-thunk f i thunk)
+
+:(top-level-flip alpha)
+:(top-level-bottom)
+:(top-level-current-probability)
+
+:(supportq ...)
+:(supportv ...)
+:(supportp ...)
+
+:(distributionq ...)
+:(distributionv ...)
+:(distributionp ...)
+
+:(fold-distribution ...)
+
+:(support-thunk thunk)
+:(supportq-thunk thunk)
+:(supportv-thunk thunk)
+:(supportp-thunk p? thunk)
+
+:(probability-thunk thunk)
+
+:(expected-value-thunk plus times zero thunk)
+
+:(entropy-thunk thunk)
+
+:(distribution-thunk thunk)
+:(distributionq-thunk thunk)
+:(distributionv-thunk thunk)
+:(distributionp-thunk p? thunk)
+
+:(upon-bottom-thunk thunk)
+
+:(restrict-distribution! x distribution)
+
+:(gm-bound? x)
+:(gm-binding x)
+
+:(some-element p x)
+:(one-element p x)
+:(the-element p x)
+:(the-elements p x)
+
+:(attach-demon! demon x)
+
+Low-level procedures of interest to implementors, undocumented.
 
 === License ===
 
 Copyright 2010-2012 Purdue University. All rights reserved.
 This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
+it under the terms of the GNU General Lesser Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-You should have received a copy of the GNU General Public License
+GNU General Lesser Public License for more details.
+You should have received a copy of the GNU General Lesser Public License
 along with this program.  If not, see http://www.gnu.org/licenses.
 __NOTOC__

@@ -1,82 +1,41 @@
 (module stochastic-discrete *
 (import chicken scheme extras)
-(require-extension nondeterminism define-structure srfi-1 traversal)
+(require-extension nondeterminism define-structure srfi-1 traversal condition-utils)
 
 (define  *gm-strategy* 'ac)
-
-;; (define-macro fold-distribution
-;;  (lambda (form expander)
-;;   (unless (= (length form) 4)
-;;    (error 'support "Improper FOLD-DISTRIBUTION: ~s" form))
-;;   (expander `(fold-distribution-thunk
-;; 	      ,(second form) ,(third form) (lambda () ,(fourth form)))
-;; 	    expander)))
 
 (define-syntax fold-distribution
  (syntax-rules ()
   ((_ f i thunk) (fold-distribution-thunk f i (lambda () thunk)))))
 
-;; (define-macro support
-;;  (lambda (form expander)
-;;   (unless (= (length form) 2) (error 'support "Improper SUPPORT: ~s" form))
-;;   (expander `(support-thunk (lambda () ,(second form))) expander)))
-
 (define-syntax support
  (syntax-rules ()
-  ((_ thunk) (support-thunk-thunk))))
+  ((_ thunk) (support-thunk (lambda () thunk)))))
 
 (define-syntax supportq
  (syntax-rules ()
-  ((_ thunk) (supportq-thunk-thunk))))
+  ((_ thunk) (supportq-thunk (lambda () thunk)))))
 
 (define-syntax supportv
  (syntax-rules ()
-  ((_ thunk) (supportv-thunk-thunk))))
+  ((_ thunk) (supportv-thunk (lambda () thunk)))))
 
 (define-syntax supportp
  (syntax-rules ()
-  ((_ thunk) (supportv-thunk-thunk))))
-
-;; (define-macro probability
-;;  (lambda (form expander)
-;;   (unless (= (length form) 2)
-;;    (error 'probability "Improper PROBABILITY: ~s" form))
-;;   (expander `(probability-thunk (lambda () ,(second form))) expander)))
+  ((_ thunk) (supportv-thunk (lambda () thunk)))))
 
 (define-syntax probability
  (syntax-rules ()
   ((_ thunk) (probability-thunk (lambda () thunk)))))
-
-;; (define-macro expected-value
-;;  (lambda (form expander)
-;;   (unless (= (length form) 5)
-;;    (error 'expected-value "Improper EXPECTED-VALUE: ~s" form))
-;;   (expander `(expected-value-thunk
-;; 	      ,(second form)
-;; 	      ,(third form)
-;; 	      ,(fourth form)
-;; 	      (lambda () ,(fifth form)))
-;; 	    expander)))
 
 (define-syntax expected-value
  (syntax-rules ()
   ((_ plus times zero thunk) 
    (expected-value-thunk plus times zero (lambda () thunk)))))
 
-;; (define-macro entropy
-;;  (lambda (form expander)
-;;   (unless (= (length form) 2) (error 'entropy "Improper ENTROPY: ~s" form))
-;;   (expander `(entropy-thunk (lambda () ,(second form))) expander)))
-
 (define-syntax entropy
  (syntax-rules ()
   ((_ thunk) (entropy-thunk (lambda () thunk)))))
-
-;; (define-macro distribution
-;;  (lambda (form expander)
-;;   (unless (= (length form) 2)
-;;    (error 'distribution "Improper DISTRIBUTION: ~s" form))
-;;   (expander `(distribution-thunk (lambda () ,(second form))) expander)))
 
 (define-syntax distribution
  (syntax-rules ()
@@ -96,33 +55,51 @@
 
 ;;; TODO mutual information, K-L divergence, mean, median, mode, variance
 
-(define flip (lambda (alpha) (error "Top-level flip")))
+(define (top-level-flip alpha)
+ (abort (make-exn-condition+ 'flip "Top-level flip" (list alpha) 'stochastic-discrete)))
 
-(define bottom (lambda () (error "Top-level bottom")))
+(define (top-level-bottom)
+ (abort (make-exn-condition+ 'bottom "Top-level bottom" '() 'stochastic-discrete)))
 
-(define current-probability (lambda () (error "Top-level current-probability")))
+(define (top-level-current-probability)
+ (abort (make-exn-condition+ 'current-probability
+                             "Top-level current-probability" '() 'stochastic-discrete)))
+
+(define flip top-level-flip)
+
+(define bottom top-level-bottom)
+
+(define current-probability top-level-current-probability)
+
+(define (forget-trail)
+ (set! flip top-level-flip)
+ (set! bottom top-level-bottom)
+ (set! current-probability top-level-current-probability)
+ #f)
 
 (define (fold-distribution-thunk f i thunk)
  (call-with-current-continuation
   (lambda (c)
-   (let ((accumulation i) (p 1) (saved-flip flip)
+   (let ((accumulation i) (p 1.0) (saved-flip flip)
 	 (saved-bottom bottom) (saved-current-probability current-probability))
     (set! current-probability (lambda () p))
     (set! flip
 	  (lambda (alpha)
-	   (unless (<= 0 alpha 1) (error "Alpha not probability"))
-	   (cond ((zero? alpha) #f)
-		 ((= alpha 1) #t)
-		 (else (call-with-current-continuation
-			(lambda (c)
-			 (let ((saved-p p) (saved-bottom bottom))
-			  (set! p (* alpha p))
-			  (set! bottom
-				(lambda ()
-				 (set! p (* (- 1 alpha) saved-p))
-				 (set! bottom saved-bottom)
-				 (c #f)))
-			  #t)))))))
+	   (unless (<= 0 alpha (+ 1.0 flonum-epsilon))
+            (abort (make-exn-condition+ 'fold-distribution-thunk "alpha is not a probability" (list alpha) 'stochastic-discrete)))
+	   (let ((alpha (min 1.0 alpha)))
+            (cond ((zero? alpha) #f)
+                  ((= alpha 1.0) #t)
+                  (else (call-with-current-continuation
+                         (lambda (c)
+                          (let ((saved-p p) (saved-bottom bottom))
+                           (set! p (* alpha p))
+                           (set! bottom
+                                 (lambda ()
+                                  (set! p (* (- 1.0 alpha) saved-p))
+                                  (set! bottom saved-bottom)
+                                  (c #f)))
+                           #t))))))))
     (set! bottom
 	  (lambda ()
 	   (set! flip saved-flip)
@@ -229,18 +206,22 @@
        distribution
        `(#f . -inf.0)))
 
+(define (normalize-distribution distribution)
+ (let ((t (foldl + 0 (map cdr distribution))))
+  (map (lambda (pair) (cons (car pair) (/ (cdr pair) t))) distribution)))
+
 (define (draw-pair distribution)
  (define (min x1 x2) (if (< x1 x2) x1 x2))
  (define (max x1 x2) (if (> x1 x2) x1 x2))
- (let loop ((distribution distribution) (p 1))
+ (let loop ((distribution distribution) (p 1.0))
   (cond
    ((or (zero? p) (null? distribution)) (bottom))
-   ((flip (min (/ (cdr (first distribution)) p) 1)) (first distribution))
+   ((flip (min (/ (cdr (first distribution)) p) 1.0)) (first distribution))
    (else
     (loop (rest distribution) (max (- p (cdr (first distribution))) 0))))))
 
 (define (draw distribution)
- (let loop ((p 1)
+ (let loop ((p 1.0)
 	    (pairs
 	     ;; This is done not so much for efficiency but to prevent a
 	     ;; situation where the last pair has zero probability and roundoff
